@@ -77,6 +77,10 @@ function decodePolyline(encoded: string, includeElevation = false): GeneratedRou
 /**
  * Generate multiple loop route options using GraphHopper round_trip algorithm
  */
+/**
+ * Generate multiple loop route options using GraphHopper round_trip algorithm
+ * Optimized for accuracy by making multiple parallel requests with varying parameters
+ */
 export async function generateLoopRoutes(options: {
     center: LatLng;
     distanceKm: number;
@@ -90,19 +94,33 @@ export async function generateLoopRoutes(options: {
         return generateFallbackRoutes(center, distanceKm, count);
     }
 
-    const routes: RouteOption[] = [];
     const distanceMeters = distanceKm * 1000;
 
-    // Generate multiple routes with different seeds
-    for (let i = 0; i < count; i++) {
+    // Strategy: Make multiple requests with varying distance factors and seeds
+    // to find routes that are closest to the target distance.
+    // GraphHopper often returns shorter routes, so we lean towards slightly larger factors.
+    const attempts = [
+        { factor: 1.0, seedOffset: 0 },
+        { factor: 1.1, seedOffset: 123 },
+        { factor: 1.2, seedOffset: 456 },
+        { factor: 0.9, seedOffset: 789 },
+        { factor: 1.05, seedOffset: 101 },
+        { factor: 0.95, seedOffset: 202 },
+        { factor: 1.15, seedOffset: 303 },
+        { factor: 1.25, seedOffset: 404 }, // Try significantly larger as well
+    ];
+
+    const promises = attempts.map(async (attempt, index) => {
         try {
-            const seed = Math.floor(Math.random() * 1000000) + i * 12345;
+            const seed = Math.floor(Math.random() * 100000) + attempt.seedOffset;
+            const targetDistance = Math.round(distanceMeters * attempt.factor);
 
             const params = new URLSearchParams({
+                key: apiKey,
                 point: `${center.lat},${center.lng}`,
                 profile: "foot",
                 algorithm: "round_trip",
-                "round_trip.distance": distanceMeters.toString(),
+                "round_trip.distance": targetDistance.toString(),
                 "round_trip.seed": seed.toString(),
                 elevation: "true",
                 points_encoded: "false",
@@ -110,57 +128,90 @@ export async function generateLoopRoutes(options: {
             });
 
             const response = await fetch(
-                `https://graphhopper.com/api/1/route?${params.toString()}`,
-                {
-                    headers: {
-                        Authorization: apiKey,
-                    },
-                }
+                `https://graphhopper.com/api/1/route?${params.toString()}`
             );
 
             if (!response.ok) {
-                console.error(`GraphHopper API error: ${response.status}`);
-                continue;
+                return null;
             }
 
             const data: GraphHopperResponse = await response.json();
-
             if (data.paths && data.paths.length > 0) {
-                const path = data.paths[0];
-
-                const points: GeneratedRoutePoint[] = path.points.coordinates.map(
-                    ([lng, lat, elevation]) => ({
-                        lat,
-                        lng,
-                        elevation: elevation ?? null,
-                    })
-                );
-
-                routes.push({
-                    id: `route-${i + 1}`,
-                    name: getRouteName(i, path.ascend),
-                    points,
-                    estimatedDistanceKm: path.distance / 1000,
-                    estimatedUphillGainM: path.ascend,
-                    totalTime: path.time / 1000, // convert to seconds
-                    ascend: path.ascend,
-                    descend: path.descend,
-                });
+                return data.paths[0]; // Return the first path from this request
             }
         } catch (error) {
-            console.error(`Failed to generate route ${i + 1}:`, error);
+            console.error(`Attempt ${index} failed:`, error);
         }
-    }
+        return null;
+    });
 
-    // Sort by ascending (prefer flatter routes)
-    routes.sort((a, b) => a.ascend - b.ascend);
+    // Wait for all requests to complete
+    const results = await Promise.all(promises);
 
-    // If no routes generated, use fallback
-    if (routes.length === 0) {
+    // Filter valid results
+    const validPaths = results.filter((path): path is NonNullable<typeof path> => path !== null);
+
+    if (validPaths.length === 0) {
         return generateFallbackRoutes(center, distanceKm, count);
     }
 
-    return routes;
+    // Process and score paths
+    const candidateRoutes: RouteOption[] = validPaths.map((path, index) => {
+        const points: GeneratedRoutePoint[] = path.points.coordinates.map(
+            ([lng, lat, elevation]) => ({
+                lat,
+                lng,
+                elevation: elevation ?? null,
+            })
+        );
+
+        const actualDistanceKm = path.distance / 1000;
+
+        return {
+            id: `route-${index}`, // Temporary ID
+            name: "", // Will be assigned later
+            points,
+            estimatedDistanceKm: actualDistanceKm,
+            estimatedUphillGainM: path.ascend,
+            totalTime: path.time / 1000,
+            ascend: path.ascend,
+            descend: path.descend,
+        };
+    });
+
+    // Remove duplicates (based on very similar distance and ascend)
+    const uniqueRoutes: RouteOption[] = [];
+    candidateRoutes.forEach(route => {
+        const isDuplicate = uniqueRoutes.some(existing =>
+            Math.abs(existing.estimatedDistanceKm - route.estimatedDistanceKm) < 0.05 && // < 50m diff
+            Math.abs(existing.ascend - route.ascend) < 5 // < 5m diff
+        );
+        if (!isDuplicate) {
+            uniqueRoutes.push(route);
+        }
+    });
+
+    // Sort by accuracy (closeness to target distance)
+    uniqueRoutes.sort((a, b) => {
+        const diffA = Math.abs(a.estimatedDistanceKm - distanceKm);
+        const diffB = Math.abs(b.estimatedDistanceKm - distanceKm);
+        return diffA - diffB;
+    });
+
+    // Select top N routes
+    const topRoutes = uniqueRoutes.slice(0, count);
+
+    // If we have fewer than requested, fill with fallback? 
+    // Usually user prefers fewer accurate routes than garbage. 
+    // But let's fallback if we have ABSOLUTELY nothing close (e.g. > 50% error).
+    // For now, just return what we have (up to count).
+
+    // Assign final IDs and Names
+    return topRoutes.map((route, i) => ({
+        ...route,
+        id: `route-opt-${i + 1}`,
+        name: getRouteName(i, route.ascend),
+    }));
 }
 
 /**
@@ -178,6 +229,7 @@ function getRouteName(index: number, ascend: number): string {
 
 /**
  * Fallback: Generate geometric loop routes when API is unavailable
+ * The route starts and ends at the current location (center), not around it
  */
 function generateFallbackRoutes(
     center: LatLng,
@@ -187,9 +239,10 @@ function generateFallbackRoutes(
     const routes: RouteOption[] = [];
 
     for (let i = 0; i < count; i++) {
-        const variation = 0.9 + i * 0.1; // 0.9, 1.0, 1.1
+        const variation = 0.95 + i * 0.05; // 0.95, 1.0, 1.05
         const adjustedDistance = distanceKm * variation;
 
+        // Calculate radius so that the route circumference equals target distance
         const earthRadiusKm = 6371;
         const radiusKm = adjustedDistance / (2 * Math.PI);
         const latRadiusDeg = (radiusKm / earthRadiusKm) * (180 / Math.PI);
@@ -200,22 +253,32 @@ function generateFallbackRoutes(
 
         const points: GeneratedRoutePoint[] = [];
         const segments = 40;
-        const angleOffset = (i * Math.PI) / 4; // Rotate each route
+
+        // Direction offset for each route (different directions)
+        const directionOffset = (i * 2 * Math.PI) / 3; // 0°, 120°, 240°
+
+        // Calculate the circle center so that current location is ON the circle
+        // The center of the circle is offset from current location by the radius
+        const circleCenterLat = center.lat - Math.sin(directionOffset) * latRadiusDeg;
+        const circleCenterLng = center.lng - Math.cos(directionOffset) * lngRadiusDeg;
 
         for (let j = 0; j <= segments; j++) {
             const t = j / segments;
-            const angle = t * Math.PI * 2 + angleOffset;
+            const angle = t * Math.PI * 2 + directionOffset;
 
-            const wobble =
-                0.85 +
-                0.3 * Math.sin(3 * angle + center.lat + i) +
-                0.15 * Math.cos(5 * angle + center.lng);
+            // Add some natural wobble to make it feel less geometric
+            const wobble = 0.92 + 0.16 * Math.sin(3 * angle + i);
 
-            const lat = center.lat + Math.sin(angle) * latRadiusDeg * wobble;
-            const lng = center.lng + Math.cos(angle) * lngRadiusDeg * wobble;
+            const lat = circleCenterLat + Math.sin(angle) * latRadiusDeg * wobble;
+            const lng = circleCenterLng + Math.cos(angle) * lngRadiusDeg * wobble;
 
             points.push({ lat, lng, elevation: null });
         }
+
+        // Ensure the first point is exactly the current location
+        points[0] = { lat: center.lat, lng: center.lng, elevation: null };
+        // Ensure the last point is also the current location (loop closure)
+        points[points.length - 1] = { lat: center.lat, lng: center.lng, elevation: null };
 
         const estimatedTime = adjustedDistance * 12 * 60; // ~12 min/km walking
 
