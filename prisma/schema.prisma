@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Route {
+  id                 String   @id @default(cuid())
+  createdAt          DateTime @default(now())
+  name               String?
+  distanceKm         Float
+  estimatedDurationS Int
+
+  startLat Float
+  startLng Float
+
+  // Compressed polyline or raw coordinate list (as JSON)
+  geometry Json
+
+  runs Run[]
+}
+
+model Run {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+
+  route   Route? @relation(fields: [routeId], references: [id])
+  routeId String?
+
+  totalDistanceKm    Float
+  totalDurationSec   Int
+  avgPaceSecPerKm    Float
+  avgCadence         Int?
+  elevationGainMeter Float? // will be hydrated once GraphHopper is hooked up
+}
+
