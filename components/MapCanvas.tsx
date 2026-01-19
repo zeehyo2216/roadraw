@@ -7,6 +7,7 @@ import type { RouteOption } from "@/lib/graphhopperRoute";
 type MapCanvasProps = {
   center: LatLng | null;
   routes?: RouteOption[];
+  guideRoute?: RouteOption | null; // NEW: The planned route to follow
   selectedRouteIndex?: number;
 };
 
@@ -19,9 +20,10 @@ declare global {
 }
 
 const SELECTED_COLOR = "#34d399"; // emerald-400
+const GUIDE_COLOR = "#34d399"; // emerald-400 (for guide route)
 const UNSELECTED_COLOR = "#6b7280"; // gray-500
 
-export function MapCanvas({ center, routes, selectedRouteIndex = 0 }: MapCanvasProps) {
+export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }: MapCanvasProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<any>(null);
   const polylinesRef = useRef<any[]>([]);
@@ -102,6 +104,31 @@ export function MapCanvas({ center, routes, selectedRouteIndex = 0 }: MapCanvasP
       });
       polylinesRef.current = [];
 
+      // 가이드 경로 그리기 (네비게이션 모드)
+      if (guideRoute && guideRoute.points.length > 1) {
+        const pathLatLngs = guideRoute.points.map(
+          (p) => new n.maps.LatLng(p.lat, p.lng)
+        );
+
+        // 1. 전체 경로 (반투명 가이드)
+        const guidePolyline = new n.maps.Polyline({
+          path: pathLatLngs,
+          strokeColor: GUIDE_COLOR,
+          strokeOpacity: 0.4,
+          strokeWeight: 6,
+          map: mapInstance.current,
+          zIndex: 50,
+        });
+        polylinesRef.current.push(guidePolyline);
+
+        // 2. 경로 방향 표시 (화살표 등) - 단순화를 위해 점선 등으로 표현 가능하나 일단 실선 유지
+
+        // 가이드 경로에 맞춰 지도 영역 조정 (초기 1회만 하거나 계속 하거나... 일단 매번)
+        const bounds = new n.maps.LatLngBounds();
+        pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
+        mapInstance.current.fitBounds(bounds, { padding: 60 });
+      }
+
       // 다중 경로 그리기 (선택되지 않은 것 먼저, 선택된 것 나중에)
       if (routes && routes.length > 0) {
         // 선택되지 않은 경로 먼저 그리기 (회색, 아래 레이어)
@@ -126,27 +153,38 @@ export function MapCanvas({ center, routes, selectedRouteIndex = 0 }: MapCanvasP
         });
 
         // 선택된 경로 그리기 (에메랄드, 위 레이어)
+        // routes가 있고 guideRoute가 없을 때만 selectedRoute를 강조해서 그립니다.
+        // guideRoute가 있으면 routes는 보통 유저가 달려온 경로(빨간색 등)로 표현될 것이므로 로직 분리 필요.
+        // 현재 RunTracker에서는 routes에 [userPath]를 넣어서 보내고 있음.
+
         const selectedRoute = routes[selectedRouteIndex];
         if (selectedRoute && selectedRoute.points.length > 1) {
           const pathLatLngs = selectedRoute.points.map(
             (p) => new n.maps.LatLng(p.lat, p.lng)
           );
 
+          // 가이드 모드일 경우 유저 경로는 다른 색상(예: 주황/빨강/흰색)으로 표시하면 좋음
+          // 일단 기존 로직 유지하되, guideRoute가 잇으면 유저 경로는 "실시간 경로" 느낌으로
+          const isUserPath = selectedRoute.id === 'run-path';
+          const color = isUserPath ? '#ef4444' : SELECTED_COLOR; // Red-500 for user path if tracking
+
           const polyline = new n.maps.Polyline({
             path: pathLatLngs,
-            strokeColor: SELECTED_COLOR,
+            strokeColor: color,
             strokeOpacity: 0.9,
-            strokeWeight: 5,
+            strokeWeight: isUserPath ? 4 : 5,
             map: mapInstance.current,
             zIndex: 100,
           });
 
           polylinesRef.current.push(polyline);
 
-          // 선택된 경로에 맞춰 지도 영역 조정
-          const bounds = new n.maps.LatLngBounds();
-          pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
-          mapInstance.current.fitBounds(bounds, { padding: 60 });
+          // 가이드가 없을 때만 선택된 경로에 핏
+          if (!guideRoute) {
+            const bounds = new n.maps.LatLngBounds();
+            pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
+            mapInstance.current.fitBounds(bounds, { padding: 60 });
+          }
         }
       }
     };
@@ -191,7 +229,7 @@ export function MapCanvas({ center, routes, selectedRouteIndex = 0 }: MapCanvasP
         setLoadError("Naver Maps를 불러오는 중 오류가 발생했습니다. Client ID와 도메인 허용을 확인하세요.");
       });
     }
-  }, [center, routes, selectedRouteIndex]);
+  }, [center, routes, guideRoute, selectedRouteIndex]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 'calc(100vh - 4rem)', touchAction: 'none' }} className="rounded-2xl border border-white/5 bg-slate-900/80">

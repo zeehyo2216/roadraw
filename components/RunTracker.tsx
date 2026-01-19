@@ -9,6 +9,7 @@ type RunStats = {
   elapsedSec: number;
   distanceKm: number;
   cadence: number;
+  calories: number; // NEW
 };
 
 function haversineKm(a: LatLng, b: LatLng): number {
@@ -33,14 +34,29 @@ function haversineKm(a: LatLng, b: LatLng): number {
 export function RunTracker() {
   const [path, setPath] = useState<LatLng[]>([]);
   const [center, setCenter] = useState<LatLng | null>(null);
+  const [guideRoute, setGuideRoute] = useState<RouteOption | null>(null); // NEW
   const [stats, setStats] = useState<RunStats>({
     elapsedSec: 0,
     distanceKm: 0,
     cadence: 164,
+    calories: 0, // NEW
   });
   const [isRunning, setIsRunning] = useState(true);
   const startTimeRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
+
+  // Load guide route from localStorage if available
+  useEffect(() => {
+    const savedRoute = localStorage.getItem('activeRoute');
+    if (savedRoute) {
+      try {
+        const parsed = JSON.parse(savedRoute);
+        setGuideRoute(parsed);
+      } catch (e) {
+        console.error("Failed to parse activeRoute", e);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) {
@@ -96,10 +112,17 @@ export function RunTracker() {
         const paceFactor = distance > 0 ? Math.min(1.4, 6 / (distance + 1)) : 1;
         const cadence = Math.round(baseCadence * paceFactor);
 
+        // Calorie estimate: approx 70kcal per km (standard avg for ~70kg runner)
+        // More precise: METs * Weight(kg) * Time(h). Running 10km/h is ~10 METs.
+        // Simple approximation: 1 kcal/kg/km.
+        // Let's use 70 * distanceKm for total calories burned so far.
+        const calories = Math.floor(distance * 70);
+
         return {
           ...prev,
           elapsedSec,
           cadence,
+          calories,
         };
       });
     }, 1000);
@@ -142,6 +165,7 @@ export function RunTracker() {
           {center ? (
             <MapCanvas
               center={center}
+              guideRoute={guideRoute} // Pass the guide route
               routes={path.length > 1 ? [{
                 id: 'run-path',
                 name: '러닝 경로',
@@ -171,58 +195,49 @@ export function RunTracker() {
             <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-emerald-200">
               Live Run
             </span>
-            <span>러닝 중 · 장치를 너무 자주 잠그지 마세요</span>
+            <span>{guideRoute ? `목표: ${guideRoute.name}` : "자유 러닝"}</span>
           </div>
 
-          <div className="grid grid-cols-4 gap-3 text-center text-[11px] sm:gap-4">
-            <div className="col-span-2 rounded-2xl bg-white/5 px-3 py-3 sm:px-4 sm:py-4">
+          <div className="grid grid-cols-4 gap-2 text-center text-[11px] sm:gap-4">
+            {/* 1. Pace */}
+            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
               <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
                 Pace
               </div>
-              <div className="mt-1 text-2xl font-semibold sm:text-3xl">
+              <div className="mt-1 text-xl font-semibold sm:text-2xl">
                 {paceDisplay}
               </div>
             </div>
-            <div className="rounded-2xl bg-white/5 px-3 py-3 sm:px-4 sm:py-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
-                Distance
-              </div>
-              <div className="mt-1 text-lg font-semibold sm:text-xl">
-                {distanceDisplay}
-              </div>
-              <div className="mt-0.5 text-[10px] text-white/50">km</div>
-            </div>
-            <div className="rounded-2xl bg-white/5 px-3 py-3 sm:px-4 sm:py-4">
+
+            {/* 2. Time */}
+            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
               <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
                 Time
               </div>
-              <div className="mt-1 text-lg font-semibold sm:text-xl">
+              <div className="mt-1 text-xl font-semibold sm:text-2xl">
                 {timeDisplay}
               </div>
             </div>
-          </div>
 
-          <div className="grid grid-cols-3 gap-3 text-center text-[11px] text-white/70 sm:gap-4">
-            <div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2.5">
-              <div className="text-[10px] text-white/45">Cadence</div>
-              <div className="mt-1 text-lg font-semibold">
-                {stats.cadence}
+            {/* 3. Calories (New) */}
+            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
+                Kcal
               </div>
-              <div className="mt-0.5 text-[10px] text-white/45">spm</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2.5">
-              <div className="text-[10px] text-white/45">Elevation</div>
-              <div className="mt-1 text-lg font-semibold">—</div>
-              <div className="mt-0.5 text-[10px] text-emerald-300">
-                GraphHopper 고도 연동 예정
+              <div className="mt-1 text-xl font-semibold sm:text-2xl">
+                {stats.calories}
               </div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2.5">
-              <div className="text-[10px] text-white/45">Signals</div>
-              <div className="mt-1 text-lg font-semibold">—</div>
-              <div className="mt-0.5 text-[10px] text-white/45">
-                신호등 데이터 연동 예정
+
+            {/* 4. Distance */}
+            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
+                Dist
               </div>
+              <div className="mt-1 text-xl font-semibold sm:text-2xl">
+                {distanceDisplay}
+              </div>
+              <div className="mt-0.5 text-[9px] text-white/50">km</div>
             </div>
           </div>
 
@@ -230,15 +245,25 @@ export function RunTracker() {
             <button
               type="button"
               onClick={() => setIsRunning((prev) => !prev)}
-              className="flex flex-1 items-center justify-center rounded-full bg-emerald-400 px-4 py-2 text-xs font-semibold text-black shadow-[0_12px_32px_rgba(16,185,129,0.7)] hover:bg-emerald-300"
+              className="flex flex-1 items-center justify-center rounded-full bg-emerald-400 px-4 py-3 text-xs font-bold text-black shadow-[0_12px_32px_rgba(16,185,129,0.7)] hover:bg-emerald-300 active:scale-95 transition-all"
             >
-              {isRunning ? "일시 정지" : "다시 시작"}
+              {isRunning ? (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="mr-1"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" /></svg>
+                  일시 정지
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="mr-1"><path d="M8 5v14l11-7z" /></svg>
+                  다시 시작
+                </>
+              )}
             </button>
             <button
               type="button"
-              className="flex flex-1 items-center justify-center rounded-full border border-red-400/60 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-200 hover:bg-red-500/20"
+              className="flex flex-1 items-center justify-center rounded-full border border-red-400/60 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-200 hover:bg-red-500/20 active:scale-95 transition-all"
             >
-              러닝 종료 및 저장 (MVP)
+              종료
             </button>
           </div>
         </div>

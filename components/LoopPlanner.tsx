@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { generateLoopRouteAction } from "@/app/actions/routes";
 import type { LatLng } from "@/lib/loopRoute";
 import type { RouteOption } from "@/lib/graphhopperRoute";
@@ -132,15 +133,22 @@ export function LoopPlanner({
   // ----------------------------------------------------------------------
   // View: Result Mode (Floating Cards + Back Button)
   // ----------------------------------------------------------------------
-  // ----------------------------------------------------------------------
-  // View: Result Mode (Floating Cards + Back Button)
-  // ----------------------------------------------------------------------
+  const router = useRouter();
+
+  const handleStartRun = () => {
+    const selectedRoute = routes[selectedRouteIndex];
+    if (!selectedRoute) return;
+
+    localStorage.setItem('activeRoute', JSON.stringify(selectedRoute));
+    router.push('/run/nav');
+  };
+
   if (routes.length > 0) {
     return (
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex flex-col items-center gap-3 p-4 pb-8 sm:p-6 sm:pb-10">
         <div className="flex w-full max-w-xl flex-col gap-2">
           {/* Back Button (Above Cards) */}
-          <div className="pointer-events-auto flex justify-start px-1">
+          <div className="pointer-events-auto flex justify-between px-1">
             <button
               type="button"
               onClick={handleReset}
@@ -163,6 +171,29 @@ export function LoopPlanner({
               </svg>
               뒤로가기
             </button>
+
+            <button
+              type="button"
+              onClick={handleStartRun}
+              className="group flex items-center gap-1.5 rounded-full bg-emerald-500 px-4 py-1.5 text-[11px] font-bold text-black shadow-[0_4px_12px_rgba(16,185,129,0.4)] transition hover:bg-emerald-400 hover:scale-105 active:scale-95"
+            >
+              시작하기
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="transition-transform group-hover:translate-x-0.5"
+              >
+                <path d="M5 12h14" />
+                <path d="M12 5l7 7-7 7" />
+              </svg>
+            </button>
           </div>
 
           {/* Floating Route Cards (Grid 3 Columns) */}
@@ -173,15 +204,15 @@ export function LoopPlanner({
                 type="button"
                 onClick={() => handleRouteSelect(index)}
                 className={`relative flex flex-col justify-between overflow-hidden rounded-2xl border p-3 text-left shadow-2xl backdrop-blur-xl transition-all hover:-translate-y-1 ${index === selectedRouteIndex
-                    ? "border-emerald-400/50 bg-emerald-950/80 text-white shadow-emerald-900/20"
-                    : "border-white/10 bg-black/60 text-white/70 hover:bg-black/80"
+                  ? "border-emerald-400/50 bg-emerald-950/80 text-white shadow-emerald-900/20"
+                  : "border-white/10 bg-black/60 text-white/70 hover:bg-black/80"
                   }`}
               >
                 <div className="flex w-full items-center justify-between">
                   <span
                     className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold ${index === selectedRouteIndex
-                        ? "bg-emerald-400 text-black"
-                        : "bg-white/20 text-white/80"
+                      ? "bg-emerald-400 text-black"
+                      : "bg-white/20 text-white/80"
                       }`}
                   >
                     {index + 1}
