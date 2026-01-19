@@ -8,8 +8,7 @@ import type { RouteOption } from "@/lib/graphhopperRoute";
 type RunStats = {
   elapsedSec: number;
   distanceKm: number;
-  cadence: number;
-  calories: number; // NEW
+  calories: number;
 };
 
 function haversineKm(a: LatLng, b: LatLng): number {
@@ -31,17 +30,61 @@ function haversineKm(a: LatLng, b: LatLng): number {
   return R * c;
 }
 
+// Calculate bearing between two points
+function calculateBearing(from: LatLng, to: LatLng): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const toDeg = (v: number) => (v * 180) / Math.PI;
+
+  const dLng = toRad(to.lng - from.lng);
+  const lat1 = toRad(from.lat);
+  const lat2 = toRad(to.lat);
+
+  const x = Math.sin(dLng) * Math.cos(lat2);
+  const y = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+
+  let bearing = toDeg(Math.atan2(x, y));
+  return (bearing + 360) % 360;
+}
+
+// Get turn instruction based on angle difference
+function getTurnInstruction(currentBearing: number, nextBearing: number): { text: string; icon: string } {
+  let diff = nextBearing - currentBearing;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+
+  if (Math.abs(diff) < 20) {
+    return { text: "직진", icon: "↑" };
+  } else if (diff >= 20 && diff < 70) {
+    return { text: "우측으로 이동", icon: "↗" };
+  } else if (diff >= 70 && diff < 110) {
+    return { text: "우회전", icon: "→" };
+  } else if (diff >= 110) {
+    return { text: "크게 우회전", icon: "↘" };
+  } else if (diff <= -20 && diff > -70) {
+    return { text: "좌측으로 이동", icon: "↖" };
+  } else if (diff <= -70 && diff > -110) {
+    return { text: "좌회전", icon: "←" };
+  } else {
+    return { text: "크게 좌회전", icon: "↙" };
+  }
+}
+
 export function RunTracker() {
   const [path, setPath] = useState<LatLng[]>([]);
   const [center, setCenter] = useState<LatLng | null>(null);
-  const [guideRoute, setGuideRoute] = useState<RouteOption | null>(null); // NEW
+  const [heading, setHeading] = useState<number>(0);
+  const [guideRoute, setGuideRoute] = useState<RouteOption | null>(null);
   const [stats, setStats] = useState<RunStats>({
     elapsedSec: 0,
     distanceKm: 0,
-    cadence: 164,
-    calories: 0, // NEW
+    calories: 0,
   });
   const [isRunning, setIsRunning] = useState(true);
+  const [nextInstruction, setNextInstruction] = useState<{ text: string; icon: string; distance: number }>({
+    text: "경로를 따라 이동하세요",
+    icon: "↑",
+    distance: 0,
+  });
   const startTimeRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
@@ -58,6 +101,38 @@ export function RunTracker() {
     }
   }, []);
 
+  // Find next waypoint and calculate instruction
+  useEffect(() => {
+    if (!center || !guideRoute || guideRoute.points.length < 2) return;
+
+    // Find the closest point on the route
+    let minDist = Infinity;
+    let closestIdx = 0;
+    guideRoute.points.forEach((p, i) => {
+      const dist = haversineKm(center, p);
+      if (dist < minDist) {
+        minDist = dist;
+        closestIdx = i;
+      }
+    });
+
+    // Look ahead to find next turn
+    const lookAhead = Math.min(closestIdx + 5, guideRoute.points.length - 1);
+    if (lookAhead > closestIdx) {
+      const currentPoint = guideRoute.points[closestIdx];
+      const nextPoint = guideRoute.points[lookAhead];
+      const distanceToNext = haversineKm(center, nextPoint) * 1000; // meters
+
+      const bearingToNext = calculateBearing(currentPoint, nextPoint);
+      const instruction = getTurnInstruction(heading, bearingToNext);
+
+      setNextInstruction({
+        ...instruction,
+        distance: Math.round(distanceToNext),
+      });
+    }
+  }, [center, guideRoute, heading]);
+
   useEffect(() => {
     if (!("geolocation" in navigator)) {
       return;
@@ -72,7 +147,12 @@ export function RunTracker() {
           lng: pos.coords.longitude,
         };
 
-        setCenter((prevCenter) => prevCenter ?? nextPoint);
+        // Update heading if available
+        if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
+          setHeading(pos.coords.heading);
+        }
+
+        setCenter(nextPoint);
 
         setPath((prev) => {
           if (prev.length === 0) return [nextPoint];
@@ -81,6 +161,12 @@ export function RunTracker() {
 
           if (deltaKm < 0.005) {
             return prev;
+          }
+
+          // Calculate heading from movement if device heading not available
+          if (!pos.coords.heading || isNaN(pos.coords.heading)) {
+            const newHeading = calculateBearing(last, nextPoint);
+            setHeading(newHeading);
           }
 
           setStats((prevStats) => ({
@@ -106,25 +192,11 @@ export function RunTracker() {
       const now = Date.now();
       const elapsedSec = Math.floor((now - startTimeRef.current) / 1000);
 
-      setStats((prev) => {
-        const distance = prev.distanceKm;
-        const baseCadence = 162;
-        const paceFactor = distance > 0 ? Math.min(1.4, 6 / (distance + 1)) : 1;
-        const cadence = Math.round(baseCadence * paceFactor);
-
-        // Calorie estimate: approx 70kcal per km (standard avg for ~70kg runner)
-        // More precise: METs * Weight(kg) * Time(h). Running 10km/h is ~10 METs.
-        // Simple approximation: 1 kcal/kg/km.
-        // Let's use 70 * distanceKm for total calories burned so far.
-        const calories = Math.floor(distance * 70);
-
-        return {
-          ...prev,
-          elapsedSec,
-          cadence,
-          calories,
-        };
-      });
+      setStats((prev) => ({
+        ...prev,
+        elapsedSec,
+        calories: Math.floor(prev.distanceKm * 70),
+      }));
     }, 1000);
 
     return () => {
@@ -142,7 +214,7 @@ export function RunTracker() {
     const sec = Math.floor(paceSecPerKm % 60)
       .toString()
       .padStart(2, "0");
-    return `${min}:${sec} /km`;
+    return `${min}'${sec}"`;
   }, [stats.distanceKm, stats.elapsedSec]);
 
   const distanceDisplay = stats.distanceKm.toFixed(2);
@@ -159,111 +231,103 @@ export function RunTracker() {
   }, [stats.elapsedSec]);
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col bg-black text-white">
-      <div className="relative flex-1">
-        <div className="absolute inset-0">
-          {center ? (
-            <MapCanvas
-              center={center}
-              guideRoute={guideRoute} // Pass the guide route
-              routes={path.length > 1 ? [{
-                id: 'run-path',
-                name: '러닝 경로',
-                points: path.map(p => ({ ...p, elevation: null })),
-                estimatedDistanceKm: stats.distanceKm,
-                totalTime: stats.elapsedSec,
-                ascend: 0,
-                descend: 0,
-              }] : []}
-              selectedRouteIndex={0}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black text-xs text-white/60">
-              브라우저에서 위치 접근을 허용하면,
-              <br />
-              이 화면에서 실제 루트가 그려집니다.
-            </div>
-          )}
-        </div>
+    <div className="relative flex h-screen flex-col bg-black text-white">
+      {/* Top gradient overlay and navigation instruction */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-36 bg-gradient-to-b from-black via-black/70 to-transparent" />
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
+      {/* Navigation instruction bar */}
+      {guideRoute && (
+        <div className="absolute inset-x-0 top-0 z-30 flex items-center gap-4 px-4 py-4 sm:px-6">
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-500 text-2xl font-bold text-white shadow-lg">
+            {nextInstruction.icon}
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-white/60">
+              {nextInstruction.distance > 0 ? `${nextInstruction.distance}m 후` : "곧"}
+            </span>
+            <span className="text-lg font-bold text-white">
+              {nextInstruction.text}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Map area - full screen */}
+      <div className="absolute inset-0">
+        {center ? (
+          <MapCanvas
+            center={center}
+            guideRoute={guideRoute}
+            heading={heading}
+            followUser={true}
+            routes={path.length > 1 ? [{
+              id: 'run-path',
+              name: '러닝 경로',
+              points: path.map(p => ({ ...p, elevation: null })),
+              estimatedDistanceKm: stats.distanceKm,
+              totalTime: stats.elapsedSec,
+              ascend: 0,
+              descend: 0,
+            }] : []}
+            selectedRouteIndex={0}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black text-xs text-white/60">
+            위치 권한을 허용해주세요
+          </div>
+        )}
       </div>
 
-      <div className="relative border-t border-white/10 bg-black/90 px-4 pb-6 pt-4 text-xs sm:px-6 sm:pb-8 sm:pt-5">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          <div className="flex items-center justify-between text-[11px] text-white/55">
-            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-emerald-200">
-              Live Run
-            </span>
-            <span>{guideRoute ? `목표: ${guideRoute.name}` : "자유 러닝"}</span>
-          </div>
+      {/* Bottom gradient overlay */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-48 bg-gradient-to-t from-black via-black/80 to-transparent" />
 
-          <div className="grid grid-cols-4 gap-2 text-center text-[11px] sm:gap-4">
-            {/* 1. Pace */}
-            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
-                Pace
-              </div>
-              <div className="mt-1 text-xl font-semibold sm:text-2xl">
-                {paceDisplay}
-              </div>
+      {/* Stats panel at bottom - using safe area padding for mobile */}
+      <div className="absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 sm:px-6 sm:pb-6">
+        <div className="mx-auto max-w-xl">
+          {/* Stats grid - more compact */}
+          <div className="mb-3 grid grid-cols-4 gap-1.5 text-center">
+            <div className="rounded-lg bg-black/70 px-1.5 py-2 backdrop-blur-sm">
+              <div className="text-[9px] uppercase tracking-wider text-white/50">페이스</div>
+              <div className="mt-0.5 text-lg font-bold">{paceDisplay}</div>
             </div>
-
-            {/* 2. Time */}
-            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
-                Time
-              </div>
-              <div className="mt-1 text-xl font-semibold sm:text-2xl">
-                {timeDisplay}
-              </div>
+            <div className="rounded-lg bg-black/70 px-1.5 py-2 backdrop-blur-sm">
+              <div className="text-[9px] uppercase tracking-wider text-white/50">시간</div>
+              <div className="mt-0.5 text-lg font-bold">{timeDisplay}</div>
             </div>
-
-            {/* 3. Calories (New) */}
-            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
-                Kcal
-              </div>
-              <div className="mt-1 text-xl font-semibold sm:text-2xl">
-                {stats.calories}
-              </div>
+            <div className="rounded-lg bg-black/70 px-1.5 py-2 backdrop-blur-sm">
+              <div className="text-[9px] uppercase tracking-wider text-white/50">칼로리</div>
+              <div className="mt-0.5 text-lg font-bold">{stats.calories}</div>
             </div>
-
-            {/* 4. Distance */}
-            <div className="rounded-2xl bg-white/5 px-2 py-3 sm:px-4 sm:py-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">
-                Dist
-              </div>
-              <div className="mt-1 text-xl font-semibold sm:text-2xl">
-                {distanceDisplay}
-              </div>
-              <div className="mt-0.5 text-[9px] text-white/50">km</div>
+            <div className="rounded-lg bg-black/70 px-1.5 py-2 backdrop-blur-sm">
+              <div className="text-[9px] uppercase tracking-wider text-white/50">거리</div>
+              <div className="mt-0.5 text-lg font-bold">{distanceDisplay}<span className="text-[9px] text-white/40 ml-0.5">km</span></div>
             </div>
           </div>
 
-          <div className="mt-1 flex items-center justify-between gap-3 text-[11px]">
+          {/* Control buttons - more compact */}
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setIsRunning((prev) => !prev)}
-              className="flex flex-1 items-center justify-center rounded-full bg-emerald-400 px-4 py-3 text-xs font-bold text-black shadow-[0_12px_32px_rgba(16,185,129,0.7)] hover:bg-emerald-300 active:scale-95 transition-all"
+              className="flex flex-1 items-center justify-center gap-2 rounded-full bg-emerald-400 px-5 py-3 text-sm font-bold text-black shadow-[0_6px_20px_rgba(16,185,129,0.4)] transition-all hover:bg-emerald-300 active:scale-95"
             >
               {isRunning ? (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="mr-1"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" /></svg>
-                  일시 정지
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" /></svg>
+                  일시정지
                 </>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="mr-1"><path d="M8 5v14l11-7z" /></svg>
-                  다시 시작
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                  재개
                 </>
               )}
             </button>
             <button
               type="button"
-              className="flex flex-1 items-center justify-center rounded-full border border-red-400/60 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-200 hover:bg-red-500/20 active:scale-95 transition-all"
+              className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-red-400/60 bg-red-500/20 text-red-300 transition-all hover:bg-red-500/30 active:scale-95"
             >
-              종료
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             </button>
           </div>
         </div>
@@ -271,4 +335,3 @@ export function RunTracker() {
     </div>
   );
 }
-

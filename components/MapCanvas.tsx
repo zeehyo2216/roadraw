@@ -7,8 +7,10 @@ import type { RouteOption } from "@/lib/graphhopperRoute";
 type MapCanvasProps = {
   center: LatLng | null;
   routes?: RouteOption[];
-  guideRoute?: RouteOption | null; // NEW: The planned route to follow
+  guideRoute?: RouteOption | null;
   selectedRouteIndex?: number;
+  heading?: number | null; // NEW: User's heading in degrees (0-360, 0 = North)
+  followUser?: boolean; // NEW: Whether to keep map centered on user
 };
 
 declare global {
@@ -23,11 +25,12 @@ const SELECTED_COLOR = "#34d399"; // emerald-400
 const GUIDE_COLOR = "#34d399"; // emerald-400 (for guide route)
 const UNSELECTED_COLOR = "#6b7280"; // gray-500
 
-export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }: MapCanvasProps) {
+export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, heading, followUser = false }: MapCanvasProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<any>(null);
   const polylinesRef = useRef<any[]>([]);
   const markerRef = useRef<any>(null);
+  const initialFitDone = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -57,7 +60,7 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }
       if (!mapInstance.current) {
         mapInstance.current = new n.maps.Map(mapRef.current, {
           center: centerLatLng,
-          zoom: 15,
+          zoom: 17, // Closer zoom for navigation
           draggable: true,
           pinchZoom: true,
           scrollWheel: true,
@@ -69,33 +72,63 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }
             position: n.maps.Position.BOTTOM_LEFT,
           },
         });
-      } else {
+      }
+
+      // Update center if followUser is true
+      if (followUser) {
         mapInstance.current.setCenter(centerLatLng);
       }
 
-      // 현재 위치 마커 생성/업데이트
-      if (center) {
-        if (!markerRef.current) {
-          markerRef.current = new n.maps.Marker({
-            position: centerLatLng,
-            map: mapInstance.current,
-            icon: {
-              content: `<div style="
-                width: 24px;
-                height: 24px;
-                background-color: #34d399;
-                border: 3px solid #ffffff;
-                border-radius: 50%;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-              "></div>`,
-              anchor: new n.maps.Point(12, 12),
-            },
-            zIndex: 1000,
-          });
-        } else {
-          markerRef.current.setPosition(centerLatLng);
-        }
-        mapInstance.current.setCenter(centerLatLng);
+      // Create/update user location marker with heading indicator
+      const headingDeg = heading ?? 0;
+      const markerContent = `
+        <div style="position: relative; width: 40px; height: 40px;">
+          <!-- Heading arrow -->
+          <div style="
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%) rotate(${headingDeg}deg);
+            transform-origin: center 28px;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 16px solid #34d399;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+          "></div>
+          <!-- Center dot -->
+          <div style="
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            background-color: #34d399;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+          "></div>
+        </div>
+      `;
+
+      if (!markerRef.current) {
+        markerRef.current = new n.maps.Marker({
+          position: centerLatLng,
+          map: mapInstance.current,
+          icon: {
+            content: markerContent,
+            anchor: new n.maps.Point(20, 20),
+          },
+          zIndex: 1000,
+        });
+      } else {
+        markerRef.current.setPosition(centerLatLng);
+        markerRef.current.setIcon({
+          content: markerContent,
+          anchor: new n.maps.Point(20, 20),
+        });
       }
 
       // 기존 폴리라인 제거
@@ -110,23 +143,24 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }
           (p) => new n.maps.LatLng(p.lat, p.lng)
         );
 
-        // 1. 전체 경로 (반투명 가이드)
+        // 전체 경로 (파란색 가이드 라인)
         const guidePolyline = new n.maps.Polyline({
           path: pathLatLngs,
           strokeColor: GUIDE_COLOR,
-          strokeOpacity: 0.4,
-          strokeWeight: 6,
+          strokeOpacity: 0.7,
+          strokeWeight: 5,
           map: mapInstance.current,
           zIndex: 50,
         });
         polylinesRef.current.push(guidePolyline);
 
-        // 2. 경로 방향 표시 (화살표 등) - 단순화를 위해 점선 등으로 표현 가능하나 일단 실선 유지
-
-        // 가이드 경로에 맞춰 지도 영역 조정 (초기 1회만 하거나 계속 하거나... 일단 매번)
-        const bounds = new n.maps.LatLngBounds();
-        pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
-        mapInstance.current.fitBounds(bounds, { padding: 60 });
+        // 초기 1회만 경로에 맞춰 지도 영역 조정
+        if (!initialFitDone.current && !followUser) {
+          const bounds = new n.maps.LatLngBounds();
+          pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
+          mapInstance.current.fitBounds(bounds, { padding: 60 });
+          initialFitDone.current = true;
+        }
       }
 
       // 다중 경로 그리기 (선택되지 않은 것 먼저, 선택된 것 나중에)
@@ -229,7 +263,7 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0 }
         setLoadError("Naver Maps를 불러오는 중 오류가 발생했습니다. Client ID와 도메인 허용을 확인하세요.");
       });
     }
-  }, [center, routes, guideRoute, selectedRouteIndex]);
+  }, [center, routes, guideRoute, selectedRouteIndex, heading, followUser]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 'calc(100vh - 4rem)', touchAction: 'none' }} className="rounded-2xl border border-white/5 bg-slate-900/80">
