@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MapCanvas } from "@/components/MapCanvas";
 import type { LatLng } from "@/lib/loopRoute";
 import type { RouteOption } from "@/lib/graphhopperRoute";
@@ -70,6 +71,7 @@ function getTurnInstruction(currentBearing: number, nextBearing: number): { text
 }
 
 export function RunTracker() {
+  const router = useRouter();
   const [path, setPath] = useState<LatLng[]>([]);
   const [center, setCenter] = useState<LatLng | null>(null);
   const [heading, setHeading] = useState<number>(0);
@@ -85,11 +87,13 @@ export function RunTracker() {
     icon: "↑",
     distance: 0,
   });
-  const [shouldRecenter, setShouldRecenter] = useState(false);
+  const [shouldRecenter, setShouldRecenter] = useState(true); // Start with true to center on initial load
+  const [showStopConfirm, setShowStopConfirm] = useState(false); // Stop confirmation modal
   const startTimeRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
+  const hasInitialCentered = useRef(false); // Track if we've done initial center
 
-  // Load guide route from localStorage if available
+  // Load guide route and saved path from localStorage if available
   useEffect(() => {
     const savedRoute = localStorage.getItem('activeRoute');
     if (savedRoute) {
@@ -100,7 +104,43 @@ export function RunTracker() {
         console.error("Failed to parse activeRoute", e);
       }
     }
+
+    // Restore saved path if exists
+    const savedPath = localStorage.getItem('runPath');
+    if (savedPath) {
+      try {
+        const parsedPath = JSON.parse(savedPath);
+        setPath(parsedPath);
+      } catch (e) {
+        console.error("Failed to parse runPath", e);
+      }
+    }
+
+    // Restore saved stats if exists
+    const savedStats = localStorage.getItem('runStats');
+    if (savedStats) {
+      try {
+        const parsedStats = JSON.parse(savedStats);
+        setStats(parsedStats);
+      } catch (e) {
+        console.error("Failed to parse runStats", e);
+      }
+    }
   }, []);
+
+  // Save path to localStorage whenever it changes
+  useEffect(() => {
+    if (path.length > 0) {
+      localStorage.setItem('runPath', JSON.stringify(path));
+    }
+  }, [path]);
+
+  // Save stats to localStorage whenever they change
+  useEffect(() => {
+    if (stats.elapsedSec > 0 || stats.distanceKm > 0) {
+      localStorage.setItem('runStats', JSON.stringify(stats));
+    }
+  }, [stats]);
 
   // Track progress along the route
   const [progressIndex, setProgressIndex] = useState(0);
@@ -253,8 +293,25 @@ export function RunTracker() {
     return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
   }, [stats.elapsedSec]);
 
+  // Handle stop button
+  const handleStopClick = () => {
+    setShowStopConfirm(true);
+  };
+
+  const handleConfirmStop = () => {
+    localStorage.removeItem('activeRoute');
+    localStorage.removeItem('runPath');
+    localStorage.removeItem('runStats');
+    router.push('/');
+  };
+
   return (
-    <div className="relative flex h-screen flex-col bg-black text-white">
+    <div
+      className="relative flex flex-col bg-black text-white h-[100dvh]"
+      style={{
+        minHeight: '-webkit-fill-available', // iOS Safari fallback
+      }}
+    >
       {/* Top gradient overlay and navigation instruction */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-36 bg-gradient-to-b from-black via-black/70 to-transparent" />
 
@@ -308,7 +365,8 @@ export function RunTracker() {
         <button
           type="button"
           onClick={() => setShouldRecenter(true)}
-          className="absolute left-4 bottom-52 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/90 active:scale-95"
+          className="absolute left-3 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/90 active:scale-95"
+          style={{ bottom: 'calc(150px + env(safe-area-inset-bottom, 0px))' }}
           aria-label="내 위치로 이동"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -365,13 +423,28 @@ export function RunTracker() {
             </button>
             <button
               type="button"
-              className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-red-400/60 bg-red-500/20 text-red-300 transition-all hover:bg-red-500/30 active:scale-95"
+              onClick={handleStopClick}
+              className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-red-400/60 bg-red-500/20 text-red-300 transition-all hover:bg-red-500/30 active:scale-95"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Stop Confirmation Modal */}
+      {showStopConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-2xl bg-slate-900 p-6 shadow-2xl">
+            <h3 className="mb-2 text-lg font-bold text-white">러닝을 종료하시겠습니까?</h3>
+            <p className="mb-6 text-sm text-white/60">종료하면 현재 기록이 저장되지 않습니다.</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowStopConfirm(false)} className="flex-1 rounded-full bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-white/20 active:scale-95">아니요</button>
+              <button type="button" onClick={handleConfirmStop} className="flex-1 rounded-full bg-red-500 px-4 py-2.5 text-sm font-bold text-white transition-all hover:bg-red-400 active:scale-95">예, 종료</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

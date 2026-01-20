@@ -16,6 +16,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "로드로 (Roadraw)",
   description: "당신의 발걸음에 맞춘 루프 러닝 코스 생성기",
+  viewport: {
+    width: 'device-width',
+    initialScale: 1,
+    viewportFit: 'cover', // iOS Safari safe-area support
+  },
 };
 
 export default function RootLayout({
