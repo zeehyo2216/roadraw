@@ -85,6 +85,7 @@ export function RunTracker() {
     icon: "↑",
     distance: 0,
   });
+  const [shouldRecenter, setShouldRecenter] = useState(false);
   const startTimeRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
@@ -101,20 +102,42 @@ export function RunTracker() {
     }
   }, []);
 
-  // Find next waypoint and calculate instruction
+  // Track progress along the route
+  const [progressIndex, setProgressIndex] = useState(0);
+  const lastProgressIndexRef = useRef(0);
+
+  // Find next waypoint, calculate instruction, and update progress
   useEffect(() => {
     if (!center || !guideRoute || guideRoute.points.length < 2) return;
 
-    // Find the closest point on the route
+    // Search for closest point, prioritizing forward progress
+    // Search window: look 50 points back (for drift) and 200 points forward
+    // For the start of the run, we search the beginning.
+    // As we progress, we avoid snapping back to 0 if the loop ends near 0.
+
     let minDist = Infinity;
-    let closestIdx = 0;
-    guideRoute.points.forEach((p, i) => {
+    let closestIdx = lastProgressIndexRef.current;
+
+    const startSearch = Math.max(0, lastProgressIndexRef.current - 50);
+    const endSearch = Math.min(guideRoute.points.length - 1, lastProgressIndexRef.current + 200);
+
+    // If we are at the very end, and it's a loop, we might want to stay at the end.
+    // Just simple window search is robust enough for standard running speeds.
+
+    for (let i = startSearch; i <= endSearch; i++) {
+      const p = guideRoute.points[i];
       const dist = haversineKm(center, p);
       if (dist < minDist) {
         minDist = dist;
         closestIdx = i;
       }
-    });
+    }
+
+    // Safety fallback: if we got lost (distance too high), search globally? 
+    // Maybe later. For now, assume consistent tracking.
+
+    lastProgressIndexRef.current = closestIdx;
+    setProgressIndex(closestIdx);
 
     // Look ahead to find next turn
     const lookAhead = Math.min(closestIdx + 5, guideRoute.points.length - 1);
@@ -259,7 +282,9 @@ export function RunTracker() {
             center={center}
             guideRoute={guideRoute}
             heading={heading}
-            followUser={true}
+            followUser={shouldRecenter}
+            progressIndex={progressIndex}
+            onMapInteraction={() => setShouldRecenter(false)}
             routes={path.length > 1 ? [{
               id: 'run-path',
               name: '러닝 경로',
@@ -277,6 +302,21 @@ export function RunTracker() {
           </div>
         )}
       </div>
+
+      {/* Recenter button */}
+      {center && !shouldRecenter && (
+        <button
+          type="button"
+          onClick={() => setShouldRecenter(true)}
+          className="absolute left-4 bottom-52 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/90 active:scale-95"
+          aria-label="내 위치로 이동"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+          </svg>
+        </button>
+      )}
 
       {/* Bottom gradient overlay */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-48 bg-gradient-to-t from-black via-black/80 to-transparent" />

@@ -9,8 +9,10 @@ type MapCanvasProps = {
   routes?: RouteOption[];
   guideRoute?: RouteOption | null;
   selectedRouteIndex?: number;
-  heading?: number | null; // NEW: User's heading in degrees (0-360, 0 = North)
-  followUser?: boolean; // NEW: Whether to keep map centered on user
+  heading?: number | null;
+  followUser?: boolean;
+  onMapInteraction?: () => void;
+  progressIndex?: number; // NEW: Index of the current point on the guide route
 };
 
 declare global {
@@ -25,7 +27,7 @@ const SELECTED_COLOR = "#34d399"; // emerald-400
 const GUIDE_COLOR = "#34d399"; // emerald-400 (for guide route)
 const UNSELECTED_COLOR = "#6b7280"; // gray-500
 
-export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, heading, followUser = false }: MapCanvasProps) {
+export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, heading, followUser = false, onMapInteraction, progressIndex = 0 }: MapCanvasProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<any>(null);
   const polylinesRef = useRef<any[]>([]);
@@ -77,6 +79,15 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
       // Update center if followUser is true
       if (followUser) {
         mapInstance.current.setCenter(centerLatLng);
+      }
+
+      // Listen for user map interactions (drag)
+      if (onMapInteraction && !mapInstance.current._dragListener) {
+        mapInstance.current._dragListener = window.naver.maps.Event.addListener(
+          mapInstance.current,
+          'dragend',
+          () => onMapInteraction()
+        );
       }
 
       // Create/update user location marker with heading indicator
@@ -143,7 +154,7 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
           (p) => new n.maps.LatLng(p.lat, p.lng)
         );
 
-        // 전체 경로 (파란색 가이드 라인)
+        // 1. 전체 경로 (에메랄드 가이드 라인 - 베이스)
         const guidePolyline = new n.maps.Polyline({
           path: pathLatLngs,
           strokeColor: GUIDE_COLOR,
@@ -153,6 +164,20 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
           zIndex: 50,
         });
         polylinesRef.current.push(guidePolyline);
+
+        // 2. 지나온 구간 (주황색 - 덮어씌우기)
+        if (progressIndex > 0) {
+          const passedLatLngs = pathLatLngs.slice(0, progressIndex + 1);
+          const passedPolyline = new n.maps.Polyline({
+            path: passedLatLngs,
+            strokeColor: '#f97316', // Orange-500
+            strokeOpacity: 1,
+            strokeWeight: 5,
+            map: mapInstance.current,
+            zIndex: 60, // Base(50) 위에 그림
+          });
+          polylinesRef.current.push(passedPolyline);
+        }
 
         // 초기 1회만 경로에 맞춰 지도 영역 조정
         if (!initialFitDone.current && !followUser) {
@@ -164,6 +189,7 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
       }
 
       // 다중 경로 그리기 (선택되지 않은 것 먼저, 선택된 것 나중에)
+      // 네비게이션 모드(guideRoute 있음)일 때는 유저 경로(run-path)를 따로 그리지 않음 (위의 흰색 라인으로 대체)
       if (routes && routes.length > 0) {
         // 선택되지 않은 경로 먼저 그리기 (회색, 아래 레이어)
         routes.forEach((route, index) => {
@@ -187,33 +213,29 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
         });
 
         // 선택된 경로 그리기 (에메랄드, 위 레이어)
-        // routes가 있고 guideRoute가 없을 때만 selectedRoute를 강조해서 그립니다.
-        // guideRoute가 있으면 routes는 보통 유저가 달려온 경로(빨간색 등)로 표현될 것이므로 로직 분리 필요.
-        // 현재 RunTracker에서는 routes에 [userPath]를 넣어서 보내고 있음.
-
+        // guideRoute가 없을 때만 그리기 OR run-path가 아닌 경우만 그리기
         const selectedRoute = routes[selectedRouteIndex];
         if (selectedRoute && selectedRoute.points.length > 1) {
+          // 가이드 모드이고 현재 경로가 유저 경로라면 스킵 (이미 위에서 흰색으로 처리됨)
+          if (guideRoute && selectedRoute.id === 'run-path') {
+            return;
+          }
+
           const pathLatLngs = selectedRoute.points.map(
             (p) => new n.maps.LatLng(p.lat, p.lng)
           );
 
-          // 가이드 모드일 경우 유저 경로는 다른 색상(예: 주황/빨강/흰색)으로 표시하면 좋음
-          // 일단 기존 로직 유지하되, guideRoute가 잇으면 유저 경로는 "실시간 경로" 느낌으로
-          const isUserPath = selectedRoute.id === 'run-path';
-          const color = isUserPath ? '#ef4444' : SELECTED_COLOR; // Red-500 for user path if tracking
-
           const polyline = new n.maps.Polyline({
             path: pathLatLngs,
-            strokeColor: color,
+            strokeColor: SELECTED_COLOR,
             strokeOpacity: 0.9,
-            strokeWeight: isUserPath ? 4 : 5,
+            strokeWeight: 5,
             map: mapInstance.current,
             zIndex: 100,
           });
 
           polylinesRef.current.push(polyline);
 
-          // 가이드가 없을 때만 선택된 경로에 핏
           if (!guideRoute) {
             const bounds = new n.maps.LatLngBounds();
             pathLatLngs.forEach((latlng: any) => bounds.extend(latlng));
@@ -263,7 +285,7 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
         setLoadError("Naver Maps를 불러오는 중 오류가 발생했습니다. Client ID와 도메인 허용을 확인하세요.");
       });
     }
-  }, [center, routes, guideRoute, selectedRouteIndex, heading, followUser]);
+  }, [center, routes, guideRoute, selectedRouteIndex, heading, followUser, progressIndex]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 'calc(100vh - 4rem)', touchAction: 'none' }} className="rounded-2xl border border-white/5 bg-slate-900/80">

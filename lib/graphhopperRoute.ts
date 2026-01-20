@@ -79,7 +79,7 @@ function decodePolyline(encoded: string, includeElevation = false): GeneratedRou
  */
 /**
  * Generate multiple loop route options using GraphHopper round_trip algorithm
- * Optimized for accuracy by making multiple parallel requests with varying parameters
+ * Uses self-hosted GraphHopper server
  */
 export async function generateLoopRoutes(options: {
     center: LatLng;
@@ -87,18 +87,14 @@ export async function generateLoopRoutes(options: {
     count?: number; // number of route options to generate
 }): Promise<RouteOption[]> {
     const { center, distanceKm, count = 3 } = options;
-    const apiKey = process.env.GRAPHHOPPER_API_KEY;
 
-    if (!apiKey || apiKey === "YOUR_GRAPHHOPPER_KEY") {
-        console.warn("GraphHopper API key not configured, using fallback");
-        return generateFallbackRoutes(center, distanceKm, count);
-    }
+    // Self-hosted GraphHopper server URL
+    const GRAPHHOPPER_URL = process.env.GRAPHHOPPER_URL;
 
     const distanceMeters = distanceKm * 1000;
 
     // Strategy: Make multiple requests with varying distance factors and seeds
     // to find routes that are closest to the target distance.
-    // GraphHopper often returns shorter routes, so we lean towards slightly larger factors.
     const attempts = [
         { factor: 1.0, seedOffset: 0 },
         { factor: 1.1, seedOffset: 123 },
@@ -107,7 +103,7 @@ export async function generateLoopRoutes(options: {
         { factor: 1.05, seedOffset: 101 },
         { factor: 0.95, seedOffset: 202 },
         { factor: 1.15, seedOffset: 303 },
-        { factor: 1.25, seedOffset: 404 }, // Try significantly larger as well
+        { factor: 1.25, seedOffset: 404 },
     ];
 
     const promises = attempts.map(async (attempt, index) => {
@@ -116,7 +112,6 @@ export async function generateLoopRoutes(options: {
             const targetDistance = Math.round(distanceMeters * attempt.factor);
 
             const params = new URLSearchParams({
-                key: apiKey,
                 point: `${center.lat},${center.lng}`,
                 profile: "foot",
                 algorithm: "round_trip",
@@ -128,10 +123,11 @@ export async function generateLoopRoutes(options: {
             });
 
             const response = await fetch(
-                `https://graphhopper.com/api/1/route?${params.toString()}`
+                `${GRAPHHOPPER_URL}/route?${params.toString()}`
             );
 
             if (!response.ok) {
+                console.warn(`GraphHopper attempt ${index} failed: ${response.status}`);
                 return null;
             }
 
