@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { Providers } from "@/components/Providers";
+import { UserButton } from "@/components/UserButton";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,7 +21,7 @@ export const metadata: Metadata = {
   viewport: {
     width: 'device-width',
     initialScale: 1,
-    viewportFit: 'cover', // iOS Safari safe-area support
+    viewportFit: 'cover',
   },
 };
 
@@ -33,38 +35,34 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-br from-black via-slate-950 to-slate-900 text-white`}
       >
-        <div className="min-h-screen flex flex-col">
-          <header className="border-b border-white/5 backdrop-blur-sm bg-black/30">
-            <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
-              <div className="flex items-center gap-2">
-                {/* <img src="/roadraw-icon.png" alt="Roadraw" className="h-7 w-7 rounded-full" /> */}
-                <div className="flex flex-col leading-tight">
-                  <span className="text-sm font-semibold tracking-[0.2em] uppercase text-emerald-300">
-                    Roadraw
-                  </span>
-                  <span className="text-xs text-white/60">
-                    Draw your running road.
-                  </span>
-                </div>
+        <Providers>
+          <div className="min-h-screen flex flex-col">
+            <header className="relative z-[9999] border-b border-white/5 backdrop-blur-sm bg-black/30">
+              <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
+                <Link href="/" className="flex items-center gap-2">
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-sm font-semibold tracking-[0.2em] uppercase text-emerald-300">
+                      Roadraw
+                    </span>
+                    <span className="text-xs text-white/60">
+                      Draw your running road.
+                    </span>
+                  </div>
+                </Link>
+                <nav className="flex items-center gap-3 text-xs">
+                  <Link
+                    href="/landing"
+                    className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/70 hover:border-emerald-300/60 hover:text-emerald-100 sm:inline"
+                  >
+                    Landing
+                  </Link>
+                  <UserButton />
+                </nav>
               </div>
-              <nav className="flex items-center gap-2 text-xs">
-                <Link
-                  href="/landing"
-                  className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/70 hover:border-emerald-300/60 hover:text-emerald-100 sm:inline"
-                >
-                  Landing
-                </Link>
-                <Link
-                  href="/"
-                  className="rounded-full bg-emerald-400 px-3 py-1 text-[11px] font-semibold text-black hover:bg-emerald-300"
-                >
-                  Planner
-                </Link>
-              </nav>
-            </div>
-          </header>
-          <main className="flex-1">{children}</main>
-        </div>
+            </header>
+            <main className="flex-1">{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   );

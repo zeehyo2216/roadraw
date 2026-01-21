@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { MapCanvas } from "@/components/MapCanvas";
+import { saveRun } from "@/app/actions/runs";
 import type { LatLng } from "@/lib/loopRoute";
 import type { RouteOption } from "@/lib/graphhopperRoute";
 
@@ -89,6 +91,9 @@ export function RunTracker() {
   });
   const [shouldRecenter, setShouldRecenter] = useState(true); // Start with true to center on initial load
   const [showStopConfirm, setShowStopConfirm] = useState(false); // Stop confirmation modal
+  const [showSaveModal, setShowSaveModal] = useState(false); // Save record modal for non-logged-in users
+  const [isSaving, setIsSaving] = useState(false);
+  const { data: session, status } = useSession();
   const startTimeRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const hasInitialCentered = useRef(false); // Track if we've done initial center
@@ -122,6 +127,11 @@ export function RunTracker() {
       try {
         const parsedStats = JSON.parse(savedStats);
         setStats(parsedStats);
+        // Adjust startTimeRef to account for restored elapsed time
+        // This way the timer continues from where it left off
+        if (parsedStats.elapsedSec > 0) {
+          startTimeRef.current = Date.now() - (parsedStats.elapsedSec * 1000);
+        }
       } catch (e) {
         console.error("Failed to parse runStats", e);
       }
@@ -135,7 +145,7 @@ export function RunTracker() {
     }
   }, [path]);
 
-  // Save stats to localStorage whenever they change
+  // Save stats to localStorage whenever they change (throttled)
   useEffect(() => {
     if (stats.elapsedSec > 0 || stats.distanceKm > 0) {
       localStorage.setItem('runStats', JSON.stringify(stats));
@@ -201,7 +211,10 @@ export function RunTracker() {
       return;
     }
 
-    startTimeRef.current = Date.now();
+    // Only set startTimeRef if not already restored from localStorage
+    if (!startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
@@ -298,11 +311,59 @@ export function RunTracker() {
     setShowStopConfirm(true);
   };
 
-  const handleConfirmStop = () => {
+  const handleConfirmStop = async () => {
+    setShowStopConfirm(false);
+
+    // Check if user is logged in
+    if (session?.user) {
+      // Save run directly
+      await handleSaveRun();
+    } else {
+      // Show save modal for non-logged-in users
+      setShowSaveModal(true);
+    }
+  };
+
+  const handleSaveRun = async () => {
+    setIsSaving(true);
+    try {
+      const result = await saveRun({
+        pathData: path,
+        totalDistanceKm: stats.distanceKm,
+        totalDurationSec: stats.elapsedSec,
+        calories: stats.calories,
+      });
+
+      if (result.error) {
+        console.error(result.error);
+      }
+    } catch (error) {
+      console.error('Failed to save run:', error);
+    }
+
+    // Clear local data and navigate
+    localStorage.removeItem('activeRoute');
+    localStorage.removeItem('runPath');
+    localStorage.removeItem('runStats');
+    router.push('/history');
+  };
+
+  const handleDiscardRun = () => {
     localStorage.removeItem('activeRoute');
     localStorage.removeItem('runPath');
     localStorage.removeItem('runStats');
     router.push('/');
+  };
+
+  const handleSignUpToSave = () => {
+    // Store run data temporarily before redirecting
+    localStorage.setItem('pendingRun', JSON.stringify({
+      pathData: path,
+      totalDistanceKm: stats.distanceKm,
+      totalDurationSec: stats.elapsedSec,
+      calories: stats.calories,
+    }));
+    router.push('/auth/signup?callbackUrl=/run/save-pending');
   };
 
   return (
@@ -437,10 +498,42 @@ export function RunTracker() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="mx-4 w-full max-w-sm rounded-2xl bg-slate-900 p-6 shadow-2xl">
             <h3 className="mb-2 text-lg font-bold text-white">러닝을 종료하시겠습니까?</h3>
-            <p className="mb-6 text-sm text-white/60">종료하면 현재 기록이 저장되지 않습니다.</p>
+            <p className="mb-6 text-sm text-white/60">
+              {session?.user ? '기록이 저장됩니다.' : '회원가입하고 기록을 저장할 수 있습니다.'}
+            </p>
             <div className="flex gap-3">
-              <button type="button" onClick={() => setShowStopConfirm(false)} className="flex-1 rounded-full bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-white/20 active:scale-95">아니요</button>
-              <button type="button" onClick={handleConfirmStop} className="flex-1 rounded-full bg-red-500 px-4 py-2.5 text-sm font-bold text-white transition-all hover:bg-red-400 active:scale-95">예, 종료</button>
+              <button type="button" onClick={() => setShowStopConfirm(false)} className="flex-1 rounded-full bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-white/20 active:scale-95">취소</button>
+              <button type="button" onClick={handleConfirmStop} className="flex-1 rounded-full bg-emerald-400 px-4 py-2.5 text-sm font-bold text-black transition-all hover:bg-emerald-300 active:scale-95">
+                {isSaving ? '저장 중...' : '종료하기'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Record Modal (for non-logged-in users) */}
+      {showSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-2xl bg-slate-900 p-6 shadow-2xl">
+            <h3 className="mb-2 text-lg font-bold text-white">기록을 저장하시겠습니까?</h3>
+            <p className="mb-6 text-sm text-white/60">
+              회원가입하면 러닝 기록을 저장하고 나중에 확인할 수 있습니다.
+            </p>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={handleSignUpToSave}
+                className="w-full rounded-full bg-emerald-400 px-4 py-3 text-sm font-bold text-black transition-all hover:bg-emerald-300 active:scale-95"
+              >
+                회원가입하고 저장하기
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardRun}
+                className="w-full rounded-full bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-white/20 active:scale-95"
+              >
+                저장하지 않고 종료
+              </button>
             </div>
           </div>
         </div>
