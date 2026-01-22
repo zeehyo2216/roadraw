@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { generateLoopRouteAction } from "@/app/actions/routes";
+import { getUserPaceSecPerKm } from "@/app/actions/settings";
 import type { LatLng } from "@/lib/loopRoute";
 import type { RouteOption } from "@/lib/graphhopperRoute";
 
@@ -27,6 +28,12 @@ export function LoopPlanner({
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isRequestingLocation, setIsRequestingLocation] = useState(true);
+  const [userPaceSecPerKm, setUserPaceSecPerKm] = useState(360); // Default 6:00/km
+
+  // Fetch user's pace setting on mount
+  useEffect(() => {
+    getUserPaceSecPerKm().then(setUserPaceSecPerKm);
+  }, []);
 
   // 페이지 접속 시 자동으로 위치 권한 요청
   useEffect(() => {
@@ -118,6 +125,12 @@ export function LoopPlanner({
   const formatTime = (seconds: number) => {
     const mins = Math.round(seconds / 60);
     return `${mins}분`;
+  };
+
+  // Calculate estimated time based on user's pace
+  const getEstimatedTime = (route: RouteOption) => {
+    // Time = distance (km) * pace (sec/km)
+    return route.estimatedDistanceKm * userPaceSecPerKm;
   };
 
   const formatDistance = (km: number) => {
@@ -234,7 +247,7 @@ export function LoopPlanner({
                 </div>
 
                 <div className="mt-2 flex w-full flex-col gap-0.5 text-[9px] opacity-60 sm:flex-row sm:justify-between sm:items-end">
-                  <span>{formatTime(route.totalTime)}</span>
+                  <span>{formatTime(getEstimatedTime(route))}</span>
                   {route.ascend > 0 && <span>↑{Math.round(route.ascend)}m</span>}
                 </div>
               </button>
