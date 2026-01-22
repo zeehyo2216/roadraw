@@ -37,7 +37,7 @@ export default function RootLayout({
       >
         <Providers>
           <div className="min-h-screen flex flex-col">
-            <header className="relative z-[9999] border-b border-white/5 backdrop-blur-sm bg-black/30">
+            <header className="relative z-[9999] border-b border-white/5 bg-slate-950">
               <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
                 <Link href="/" className="flex items-center gap-2">
                   <div className="flex flex-col leading-tight">
