@@ -79,6 +79,13 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
       // Update center if followUser is true
       if (followUser) {
         mapInstance.current.setCenter(centerLatLng);
+
+        // Rotate map so heading direction is up (heading-up navigation)
+        if (heading !== null && heading !== undefined) {
+          mapInstance.current.setOptions({
+            heading: heading, // Map rotates to show heading direction as up
+          });
+        }
       }
 
       // Listen for user map interactions (drag)

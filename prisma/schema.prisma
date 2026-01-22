@@ -76,4 +76,5 @@ model Run {
   totalDurationSec Int
   avgPaceSecPerKm  Float
   calories         Int?
+  isFavorite       Boolean  @default(false)
 }

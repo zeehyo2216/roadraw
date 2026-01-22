@@ -152,6 +152,10 @@ export function LoopPlanner({
     const selectedRoute = routes[selectedRouteIndex];
     if (!selectedRoute) return;
 
+    // Clear previous run data before starting new run
+    localStorage.removeItem('runPath');
+    localStorage.removeItem('runStats');
+
     localStorage.setItem('activeRoute', JSON.stringify(selectedRoute));
     router.push('/run/nav');
   };

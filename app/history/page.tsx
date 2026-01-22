@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { getRuns } from "@/app/actions/runs";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { FavoriteButton } from "@/components/FavoriteButton";
 
 export default async function HistoryPage() {
     const session = await auth();
@@ -57,35 +58,44 @@ export default async function HistoryPage() {
                 ) : (
                     <div className="space-y-4">
                         {runs.map((run) => (
-                            <Link
+                            <div
                                 key={run.id}
-                                href={`/history/${run.id}`}
-                                className="block rounded-2xl border border-white/10 bg-white/5 p-4 transition-all hover:border-emerald-400/40 hover:bg-white/10"
+                                className="relative rounded-2xl border border-white/10 bg-white/5 transition-all hover:border-emerald-400/40 hover:bg-white/10"
                             >
-                                <div className="mb-2 text-xs text-white/50">
-                                    {formatDate(run.createdAt)}
+                                {/* Favorite Button */}
+                                <div className="absolute right-3 top-3 z-10">
+                                    <FavoriteButton runId={run.id} initialFavorite={run.isFavorite} />
                                 </div>
-                                <div className="grid grid-cols-3 gap-4 text-center">
-                                    <div>
-                                        <div className="text-xl font-bold text-emerald-400">
-                                            {run.totalDistanceKm.toFixed(2)}
-                                        </div>
-                                        <div className="text-[10px] uppercase text-white/40">km</div>
+
+                                <Link
+                                    href={`/history/${run.id}`}
+                                    className="block p-4"
+                                >
+                                    <div className="mb-2 text-xs text-white/50">
+                                        {formatDate(run.createdAt)}
                                     </div>
-                                    <div>
-                                        <div className="text-xl font-bold text-white">
-                                            {formatDuration(run.totalDurationSec)}
+                                    <div className="grid grid-cols-3 gap-4 text-center">
+                                        <div>
+                                            <div className="text-xl font-bold text-emerald-400">
+                                                {run.totalDistanceKm.toFixed(2)}
+                                            </div>
+                                            <div className="text-[10px] uppercase text-white/40">km</div>
                                         </div>
-                                        <div className="text-[10px] uppercase text-white/40">시간</div>
-                                    </div>
-                                    <div>
-                                        <div className="text-xl font-bold text-white">
-                                            {formatPace(run.avgPaceSecPerKm)}
+                                        <div>
+                                            <div className="text-xl font-bold text-white">
+                                                {formatDuration(run.totalDurationSec)}
+                                            </div>
+                                            <div className="text-[10px] uppercase text-white/40">시간</div>
                                         </div>
-                                        <div className="text-[10px] uppercase text-white/40">페이스</div>
+                                        <div>
+                                            <div className="text-xl font-bold text-white">
+                                                {formatPace(run.avgPaceSecPerKm)}
+                                            </div>
+                                            <div className="text-[10px] uppercase text-white/40">페이스</div>
+                                        </div>
                                     </div>
-                                </div>
-                            </Link>
+                                </Link>
+                            </div>
                         ))}
                     </div>
                 )}

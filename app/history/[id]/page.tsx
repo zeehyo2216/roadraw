@@ -3,6 +3,8 @@ import { getRunById } from "@/app/actions/runs";
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { RunDetailMap } from "@/components/RunDetailMap";
+import { RerunRouteButton } from "@/components/RerunRouteButton";
+import { DeleteRunButton } from "@/components/DeleteRunButton";
 
 type Props = {
     params: Promise<{ id: string }>;
@@ -61,12 +63,15 @@ export default async function RunDetailPage({ params }: Props) {
             {/* Stats */}
             <div className="px-4 py-6">
                 <div className="mx-auto max-w-2xl">
-                    <Link
-                        href="/history"
-                        className="mb-4 inline-flex items-center gap-1 text-sm text-white/60 hover:text-white"
-                    >
-                        ← 기록 목록
-                    </Link>
+                    <div className="mb-4 flex items-center justify-between">
+                        <Link
+                            href="/history"
+                            className="inline-flex items-center gap-1 text-sm text-white/60 hover:text-white"
+                        >
+                            ← 기록 목록
+                        </Link>
+                        <DeleteRunButton runId={id} />
+                    </div>
 
                     <div className="mb-2 text-sm text-white/50">
                         {formatDate(run.createdAt)}
@@ -98,6 +103,12 @@ export default async function RunDetailPage({ params }: Props) {
                             <div className="text-xs uppercase text-white/40">칼로리</div>
                         </div>
                     </div>
+
+                    {/* Re-run button */}
+                    <RerunRouteButton
+                        pathData={pathData}
+                        distanceKm={run.totalDistanceKm}
+                    />
                 </div>
             </div>
         </div>

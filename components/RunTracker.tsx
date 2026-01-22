@@ -100,13 +100,39 @@ export function RunTracker() {
 
   // Load guide route and saved path from localStorage if available
   useEffect(() => {
-    const savedRoute = localStorage.getItem('activeRoute');
-    if (savedRoute) {
+    // Check for rerun route from history detail page first
+    const rerunRoute = sessionStorage.getItem('rerunRoute');
+    if (rerunRoute) {
       try {
-        const parsed = JSON.parse(savedRoute);
-        setGuideRoute(parsed);
+        const parsed = JSON.parse(rerunRoute);
+        // Convert to RouteOption format
+        const routeOption: RouteOption = {
+          id: 'rerun',
+          name: parsed.name || '저장된 경로',
+          points: parsed.points.map((p: { lat: number; lng: number }) => ({
+            lat: p.lat,
+            lng: p.lng,
+          })),
+          estimatedDistanceKm: parsed.estimatedDistanceKm,
+          totalTime: parsed.estimatedDistanceKm * 360, // Assume 6:00/km pace
+          ascend: 0,
+          descend: 0,
+        };
+        setGuideRoute(routeOption);
+        sessionStorage.removeItem('rerunRoute'); // Clear after loading
       } catch (e) {
-        console.error("Failed to parse activeRoute", e);
+        console.error("Failed to parse rerunRoute", e);
+      }
+    } else {
+      // Load from localStorage (normal flow)
+      const savedRoute = localStorage.getItem('activeRoute');
+      if (savedRoute) {
+        try {
+          const parsed = JSON.parse(savedRoute);
+          setGuideRoute(parsed);
+        } catch (e) {
+          console.error("Failed to parse activeRoute", e);
+        }
       }
     }
 
@@ -336,16 +362,31 @@ export function RunTracker() {
 
       if (result.error) {
         console.error(result.error);
+        // Clear local data and navigate to history on error
+        localStorage.removeItem('activeRoute');
+        localStorage.removeItem('runPath');
+        localStorage.removeItem('runStats');
+        router.push('/history');
+        return;
+      }
+
+      // Clear local data and navigate to the saved run's detail page
+      localStorage.removeItem('activeRoute');
+      localStorage.removeItem('runPath');
+      localStorage.removeItem('runStats');
+
+      if (result.runId) {
+        router.push(`/history/${result.runId}`);
+      } else {
+        router.push('/history');
       }
     } catch (error) {
       console.error('Failed to save run:', error);
+      localStorage.removeItem('activeRoute');
+      localStorage.removeItem('runPath');
+      localStorage.removeItem('runStats');
+      router.push('/history');
     }
-
-    // Clear local data and navigate
-    localStorage.removeItem('activeRoute');
-    localStorage.removeItem('runPath');
-    localStorage.removeItem('runStats');
-    router.push('/history');
   };
 
   const handleDiscardRun = () => {
@@ -376,14 +417,14 @@ export function RunTracker() {
       {/* Top gradient overlay and navigation instruction */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-36 bg-gradient-to-b from-black via-black/70 to-transparent" />
 
-      {/* Navigation instruction bar */}
+      {/* Navigation instruction bar - positioned below header */}
       {guideRoute && (
-        <div className="absolute inset-x-0 top-0 z-30 flex items-center gap-4 px-4 py-4 sm:px-6">
+        <div className="absolute left-4 top-20 z-30 flex items-center gap-3 sm:left-6">
           <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-500 text-2xl font-bold text-white shadow-lg">
             {nextInstruction.icon}
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-medium text-white/60">
+          <div className="flex flex-col rounded-xl bg-black/60 backdrop-blur-md px-4 py-2.5 shadow-lg border border-white/10">
+            <span className="text-sm font-medium text-emerald-300">
               {nextInstruction.distance > 0 ? `${nextInstruction.distance}m 후` : "곧"}
             </span>
             <span className="text-lg font-bold text-white">
