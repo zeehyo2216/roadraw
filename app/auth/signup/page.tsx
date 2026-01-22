@@ -68,7 +68,7 @@ export default function SignUpPage() {
             <div className="w-full max-w-sm">
                 <div className="mb-8 text-center">
                     <h1 className="text-2xl font-bold text-emerald-400">ROADRAW</h1>
-                    <p className="mt-2 text-sm text-white/60">회원가입하고 기록을 저장하세요</p>
+                    <p className="mt-2 text-sm text-white/60">내 근처 러닝 코스를 직접 만들어보세요!</p>
                 </div>
 
                 {/* Google Sign Up */}
