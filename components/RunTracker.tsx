@@ -72,6 +72,76 @@ function getTurnInstruction(currentBearing: number, nextBearing: number): { text
   }
 }
 
+// Turn point type for navigation
+type TurnPoint = {
+  index: number;
+  point: LatLng;
+  turnAngle: number;
+  instruction: { text: string; icon: string };
+  distanceFromStart: number; // accumulated distance in meters
+};
+
+// Calculate angle difference (normalized to -180 ~ 180)
+function angleDiff(bearing1: number, bearing2: number): number {
+  let diff = bearing2 - bearing1;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return diff;
+}
+
+// Find all turn points in the route
+function findTurnPoints(route: RouteOption): TurnPoint[] {
+  const turnPoints: TurnPoint[] = [];
+  const threshold = 25; // 25도 이상 변화하면 턴으로 인식
+  const minDistanceBetweenTurns = 20; // 최소 20m 간격
+  const lookAhead = 8; // 8 포인트 앞뒤로 방향 계산
+
+  let accumulatedDistance = 0;
+  let lastTurnDistance = 0;
+
+  for (let i = lookAhead; i < route.points.length - lookAhead; i++) {
+    // 이전 구간 거리 누적
+    accumulatedDistance += haversineKm(route.points[i - 1], route.points[i]) * 1000;
+
+    // 이전 구간 방향
+    const prevBearing = calculateBearing(
+      route.points[i - lookAhead],
+      route.points[i]
+    );
+    // 이후 구간 방향
+    const nextBearing = calculateBearing(
+      route.points[i],
+      route.points[i + lookAhead]
+    );
+
+    const diff = angleDiff(prevBearing, nextBearing);
+
+    // 턴 각도가 threshold 이상이고, 마지막 턴에서 충분히 떨어졌으면 턴 포인트 추가
+    if (Math.abs(diff) > threshold && (accumulatedDistance - lastTurnDistance) > minDistanceBetweenTurns) {
+      const instruction = getTurnInstruction(prevBearing, nextBearing);
+      turnPoints.push({
+        index: i,
+        point: route.points[i],
+        turnAngle: diff,
+        instruction,
+        distanceFromStart: accumulatedDistance,
+      });
+      lastTurnDistance = accumulatedDistance;
+    }
+  }
+
+  return turnPoints;
+}
+
+// Calculate distance along route from one index to another
+function distanceAlongRoute(route: RouteOption, fromIdx: number, toIdx: number): number {
+  let distance = 0;
+  for (let i = fromIdx; i < toIdx && i < route.points.length - 1; i++) {
+    distance += haversineKm(route.points[i], route.points[i + 1]);
+  }
+  return distance * 1000; // meters
+}
+
 export function RunTracker() {
   const router = useRouter();
   const [path, setPath] = useState<LatLng[]>([]);
@@ -181,24 +251,56 @@ export function RunTracker() {
   // Track progress along the route
   const [progressIndex, setProgressIndex] = useState(0);
   const lastProgressIndexRef = useRef(0);
+  const hasStartedRunning = useRef(false); // Track if user has actually started moving
+  const [turnPoints, setTurnPoints] = useState<TurnPoint[]>([]);
+
+  // Calculate turn points whenever guideRoute changes
+  useEffect(() => {
+    if (guideRoute && guideRoute.points.length > 20) {
+      const points = findTurnPoints(guideRoute);
+      setTurnPoints(points);
+      console.log('Found turn points:', points.length, points);
+    }
+  }, [guideRoute]);
 
   // Find next waypoint, calculate instruction, and update progress
   useEffect(() => {
     if (!center || !guideRoute || guideRoute.points.length < 2) return;
 
-    // Search for closest point, prioritizing forward progress
-    // Search window: look 50 points back (for drift) and 200 points forward
-    // For the start of the run, we search the beginning.
-    // As we progress, we avoid snapping back to 0 if the loop ends near 0.
+    // For loop routes, the start and end points are close together
+    // At the beginning, we should only search near the start to prevent
+    // accidentally matching the end of the route
+
+    const totalPoints = guideRoute.points.length;
+    const currentProgress = lastProgressIndexRef.current;
+
+    // Determine if user has started (moved along at least 3% of route)
+    if (currentProgress > totalPoints * 0.03) {
+      hasStartedRunning.current = true;
+    }
 
     let minDist = Infinity;
-    let closestIdx = lastProgressIndexRef.current;
+    let closestIdx = currentProgress;
 
-    const startSearch = Math.max(0, lastProgressIndexRef.current - 50);
-    const endSearch = Math.min(guideRoute.points.length - 1, lastProgressIndexRef.current + 200);
+    // At the very start, only search the first 20% of the route to prevent wraparound
+    // Once started, allow normal search window
+    let startSearch: number;
+    let endSearch: number;
 
-    // If we are at the very end, and it's a loop, we might want to stay at the end.
-    // Just simple window search is robust enough for standard running speeds.
+    if (!hasStartedRunning.current) {
+      // At start: only search forward from index 0 to 25% of route
+      startSearch = 0;
+      endSearch = Math.min(Math.floor(totalPoints * 0.25), totalPoints - 1);
+    } else {
+      // Normal running: search 50 points back, 200 points forward
+      startSearch = Math.max(0, currentProgress - 50);
+      endSearch = Math.min(totalPoints - 1, currentProgress + 200);
+
+      // Near the end, don't wrap back to start
+      if (currentProgress > totalPoints * 0.85) {
+        startSearch = Math.max(startSearch, Math.floor(totalPoints * 0.7));
+      }
+    }
 
     for (let i = startSearch; i <= endSearch; i++) {
       const p = guideRoute.points[i];
@@ -209,28 +311,44 @@ export function RunTracker() {
       }
     }
 
-    // Safety fallback: if we got lost (distance too high), search globally? 
-    // Maybe later. For now, assume consistent tracking.
+    // Prevent going backward too much (more than 30 points) once started
+    if (hasStartedRunning.current && closestIdx < currentProgress - 30) {
+      closestIdx = currentProgress; // Stay at current position
+    }
 
     lastProgressIndexRef.current = closestIdx;
     setProgressIndex(closestIdx);
 
-    // Look ahead to find next turn
-    const lookAhead = Math.min(closestIdx + 5, guideRoute.points.length - 1);
-    if (lookAhead > closestIdx) {
-      const currentPoint = guideRoute.points[closestIdx];
-      const nextPoint = guideRoute.points[lookAhead];
-      const distanceToNext = haversineKm(center, nextPoint) * 1000; // meters
+    // Find next turn point using pre-calculated turn points
+    const nextTurn = turnPoints.find(t => t.index > closestIdx);
 
-      const bearingToNext = calculateBearing(currentPoint, nextPoint);
-      const instruction = getTurnInstruction(heading, bearingToNext);
+    if (nextTurn) {
+      // Calculate distance along the route to the next turn
+      const distanceToTurn = distanceAlongRoute(guideRoute, closestIdx, nextTurn.index);
 
       setNextInstruction({
-        ...instruction,
-        distance: Math.round(distanceToNext),
+        text: nextTurn.instruction.text,
+        icon: nextTurn.instruction.icon,
+        distance: Math.round(distanceToTurn),
       });
+    } else {
+      // No more turns, show finish message or straight ahead
+      const remainingDistance = distanceAlongRoute(guideRoute, closestIdx, guideRoute.points.length - 1);
+      if (remainingDistance < 50) {
+        setNextInstruction({
+          text: "도착",
+          icon: "🏁",
+          distance: Math.round(remainingDistance),
+        });
+      } else {
+        setNextInstruction({
+          text: "직진",
+          icon: "↑",
+          distance: Math.round(remainingDistance),
+        });
+      }
     }
-  }, [center, guideRoute, heading]);
+  }, [center, guideRoute, turnPoints]);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) {
@@ -255,6 +373,9 @@ export function RunTracker() {
         }
 
         setCenter(nextPoint);
+
+        // Only update path and distance when running (not paused)
+        if (!isRunning) return;
 
         setPath((prev) => {
           if (prev.length === 0) return [nextPoint];

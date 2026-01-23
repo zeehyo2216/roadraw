@@ -186,6 +186,60 @@ export function MapCanvas({ center, routes, guideRoute, selectedRouteIndex = 0, 
           polylinesRef.current.push(passedPolyline);
         }
 
+        // 3. 시작 방향 화살표 마커 (심플한 화살표 스타일)
+        if (guideRoute.points.length > 10 && progressIndex < 10) {
+          const startPoint = guideRoute.points[0];
+          // 2번째 포인트를 바라보는 방향 계산 (1번째와 2번째 사이)
+          const lookAheadPoint = guideRoute.points[Math.min(1, guideRoute.points.length - 1)];
+
+          // Calculate bearing for arrow rotation
+          const toRad = (v: number) => (v * Math.PI) / 180;
+          const toDeg = (v: number) => (v * 180) / Math.PI;
+          const dLng = toRad(lookAheadPoint.lng - startPoint.lng);
+          const lat1 = toRad(startPoint.lat);
+          const lat2 = toRad(lookAheadPoint.lat);
+          const x = Math.sin(dLng) * Math.cos(lat2);
+          const y = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+          const bearing = (toDeg(Math.atan2(x, y)) + 360) % 360;
+
+          // 경로선의 수직 방향으로 오프셋 (오른쪽으로 약 15m)
+          const perpendicularBearing = bearing + 90; // 수직 방향
+          const perpRad = toRad(perpendicularBearing);
+          const sideOffset = 0.00015; // 약 15m 옆으로
+          const forwardOffset = 0.00012; // 약 12m 앞으로
+          const bearingRad = toRad(bearing);
+
+          const offsetLat = startPoint.lat
+            + sideOffset * Math.cos(perpRad)
+            + forwardOffset * Math.cos(bearingRad);
+          const offsetLng = startPoint.lng
+            + sideOffset * Math.sin(perpRad) / Math.cos(toRad(startPoint.lat))
+            + forwardOffset * Math.sin(bearingRad) / Math.cos(toRad(startPoint.lat));
+
+          const arrowContent = `
+            <div style="
+              transform: rotate(${bearing}deg);
+            ">
+              <svg width="24" height="32" viewBox="0 0 24 32" fill="none">
+                <!-- 화살표 몸통 -->
+                <line x1="12" y1="32" x2="12" y2="10" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>
+                <!-- 화살표 머리 -->
+                <path d="M4 14 L12 3 L20 14" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </div>
+          `;
+
+          new n.maps.Marker({
+            position: new n.maps.LatLng(offsetLat, offsetLng),
+            map: mapInstance.current,
+            icon: {
+              content: arrowContent,
+              anchor: new n.maps.Point(12, 16),
+            },
+            zIndex: 200,
+          });
+        }
+
         // 초기 1회만 경로에 맞춰 지도 영역 조정
         if (!initialFitDone.current && !followUser) {
           const bounds = new n.maps.LatLngBounds();
